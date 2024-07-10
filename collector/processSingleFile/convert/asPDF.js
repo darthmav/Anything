@@ -6,8 +6,9 @@ const {
 } = require("../../utils/files");
 const { tokenizeString } = require("../../utils/tokenizer");
 const { default: slugify } = require("slugify");
+const { generateChunkSource } = require("./utils");
 
-async function asPDF({ fullFilePath = "", filename = "" }) {
+async function asPdf({ fullFilePath = "", filename = "", options = {} }) {
   const pdfjsLib = await import("pdfjs-dist");
   console.log(`-- Working ${filename} --`);
 
@@ -48,7 +49,7 @@ async function asPDF({ fullFilePath = "", filename = "" }) {
     docAuthor: metadata?.info?.Creator || "no author found",
     description: metadata?.info?.Title || "No description found.",
     docSource: "pdf file uploaded by the user.",
-    chunkSource: "",
+    chunkSource: generateChunkSource({ filename, ...options }, ""),
     published: createdDate(fullFilePath),
     wordCount: content.split(" ").length,
     pageContent: content,
@@ -64,4 +65,39 @@ async function asPDF({ fullFilePath = "", filename = "" }) {
   return { success: true, reason: null, documents: [document] };
 }
 
-module.exports = asPDF;
+async function resyncPdf({ fullFilePath = "", filename = "" }) {
+  const pdfjsLib = await import("pdfjs-dist");
+  console.log(`-- Syncing ${filename} --`);
+
+  const loadingTask = pdfjsLib.default.getDocument(fullFilePath);
+  const pdf = await loadingTask.promise;
+
+  const numPages = pdf.numPages;
+  const pageContent = [];
+
+  for (let i = 1; i <= numPages; i++) {
+    console.log(`-- Parsing content from pg ${i} --`);
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const text = content.items.map((item) => item.str).join(" ");
+
+    if (text.length) {
+      pageContent.push(text);
+    }
+  }
+
+  if (!pageContent.length) {
+    console.error(`Resulting text content was empty for ${filename}.`);
+    return {
+      success: false,
+      reason: `No text content found in ${filename}.`,
+      content: null,
+    };
+  }
+
+  const content = pageContent.join("");
+  console.log(`[SYNC SUCCESS]: ${filename} content was able to be synced.\n`);
+  return { success: true, reason: null, content };
+}
+
+module.exports = { asPdf, resyncPdf };
